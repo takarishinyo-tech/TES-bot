@@ -561,10 +561,14 @@ discordClient.on("messageCreate", async (message) => {
     const soldOut = computeSoldOut(user as any);
     const botAvatar = discordClient.user!.displayAvatarURL();
 
-    const sent = await message.reply({
+    // Send the shop embed as a standalone message (not a reply)
+    const sent = await message.channel.send({
       embeds: [buildShopEmbed(user.balance?.toString() ?? "0", botAvatar, soldOut)],
       components: [buildShopButtons(soldOut)],
     });
+
+    // Delete the original TES!shop command message so only the embed is visible
+    try { await message.delete(); } catch { /* no permission, ignore */ }
 
     activeSessions.add(sent.id);
     userActiveShop.set(message.author.id, {
@@ -572,7 +576,7 @@ discordClient.on("messageCreate", async (message) => {
       delete: () => sent.delete(),
     });
 
-    // ── Delete the message after 30 seconds ────────────────────────
+    // ── Delete the shop embed after 30 seconds ─────────────────────
     setTimeout(async () => {
       if (!activeSessions.has(sent.id)) return;
       activeSessions.delete(sent.id);
@@ -581,7 +585,7 @@ discordClient.on("messageCreate", async (message) => {
       try {
         await sent.delete();
       } catch {
-        // message already deleted, ignore
+        // already deleted, ignore
       }
     }, SESSION_TIMEOUT_MS);
     return;
