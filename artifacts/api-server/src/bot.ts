@@ -91,7 +91,7 @@ type SoldOutMap = Record<string, boolean>;
 function buildShopEmbed(balance: string, botAvatarUrl: string, soldOut: SoldOutMap) {
   const lines = SHOP_ITEMS.map((item) => {
     const status = soldOut[item.id] ? "Sold Out" : "Available";
-    return `**${item.label}** — ${status} | ${item.price} 🍀`;
+    return `**${item.label}** — ${status} | ${item.price} Token`;
   });
 
   return new EmbedBuilder()
@@ -99,7 +99,7 @@ function buildShopEmbed(balance: string, botAvatarUrl: string, soldOut: SoldOutM
     .setDescription(
       `─────────────────────\n` +
       lines.join("\n") +
-      `\n\nYour balance: **${balance} 🍀**`
+      `\n\nYour balance: **${balance} Token**`
     )
     .setColor(THEME_COLOR)
     .setThumbnail(botAvatarUrl)
@@ -111,7 +111,7 @@ function buildShopEmbed(balance: string, botAvatarUrl: string, soldOut: SoldOutM
 function buildExpiredEmbed(botAvatarUrl: string, soldOut: SoldOutMap) {
   const lines = SHOP_ITEMS.map((item) => {
     const status = soldOut[item.id] ? "Sold Out" : "Available";
-    return `**${item.label}** — ${status} | ${item.price} 🍀`;
+    return `**${item.label}** — ${status} | ${item.price} Token`;
   });
 
   return new EmbedBuilder()
@@ -168,9 +168,9 @@ function buildItemDetailEmbed(
     .setDescription(item.description)
     .addFields(
       { name: "Stock", value: stockLine, inline: true },
-      { name: "Cost", value: `${item.price} 🍀`, inline: true },
+      { name: "Cost", value: `${item.price} Token`, inline: true },
       { name: "Type", value: typeLine, inline: true },
-      { name: "Your Balance", value: `${balance} 🍀`, inline: false }
+      { name: "Your Balance", value: `${balance} Token`, inline: false }
     )
     .setColor(THEME_COLOR)
     .setThumbnail(botAvatarUrl);
@@ -234,7 +234,7 @@ discordClient.on("messageCreate", async (message) => {
         new EmbedBuilder()
           .setTitle("💰 Balance")
           .setDescription(
-            `**${message.author.username}**, you have **${user.balance} 🍀**`
+            `**${message.author.username}**, you have **${user.balance} Token**`
           )
           .setColor(THEME_COLOR)
           .setThumbnail(discordClient.user!.displayAvatarURL()),
@@ -304,8 +304,8 @@ discordClient.on("messageCreate", async (message) => {
           new EmbedBuilder()
             .setTitle("✅ Tokens Given")
             .setDescription(
-              `Gave **${amount} 🍀** to ${target}.\n` +
-              `New balance: **${newBalance} 🍀**`
+              `Gave **${amount} Token** to ${target}.\n` +
+              `New balance: **${newBalance} Token**`
             )
             .setColor(THEME_COLOR)
             .setThumbnail(discordClient.user!.displayAvatarURL()),
@@ -357,8 +357,8 @@ discordClient.on("messageCreate", async (message) => {
           new EmbedBuilder()
             .setTitle("✅ Tokens Taken")
             .setDescription(
-              `Took **${taken} 🍀** from ${target}.\n` +
-              `New balance: **${newBalance} 🍀**`
+              `Took **${taken} Token** from ${target}.\n` +
+              `New balance: **${newBalance} Token**`
             )
             .setColor(THEME_COLOR)
             .setThumbnail(discordClient.user!.displayAvatarURL()),
@@ -780,9 +780,9 @@ discordClient.on("interactionCreate", async (interaction) => {
           new EmbedBuilder()
             .setTitle("✅ Purchase Successful")
             .setDescription(
-              `You purchased **${item.label}** for **${item.price} 🍀**!\n` +
+              `You purchased **${item.label}** for **${item.price} Token**!\n` +
               `📦 Inventory: **${newInventory.length}/${MAX_INVENTORY_SLOTS} slots**\n` +
-              `💰 Remaining balance: **${newBalance} 🍀**`
+              `💰 Remaining balance: **${newBalance} Token**`
             )
             .setColor(0x57f287)
             .setThumbnail(botAvatar),
@@ -883,7 +883,7 @@ discordClient.on("interactionCreate", async (interaction) => {
               `Your order for **${item.label}** has been placed!\n` +
               `📬 Notification sent to **#orders**.\n` +
               `📊 Slots: **0/1 (Active Order)**\n` +
-              `💰 Remaining balance: **${newBalance} 🍀**`
+              `💰 Remaining balance: **${newBalance} Token**`
             )
             .setColor(0x57f287)
             .setThumbnail(botAvatar),
