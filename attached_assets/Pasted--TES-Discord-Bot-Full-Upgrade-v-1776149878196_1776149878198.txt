@@ -1,0 +1,488 @@
+// ============================================================
+// TES! Discord Bot — Full Upgrade v3
+// discord.js v14 | Prefix: TES! | Economy + Buttons + Slots + Sessions
+// ============================================================
+
+const {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} = require("discord.js");
+
+const fs = require("fs");
+const path = require("path");
+
+// ── Configuration ──────────────────────────────────────────────
+const PREFIX = "TES!";
+const DATA_FILE = path.join(__dirname, "users.json");
+const MAX_INVENTORY_SLOTS = 5;   // Max slots for item-type purchases
+const SESSION_TIMEOUT_MS = 30_000; // Shop session duration: 30 seconds
+const THEME_COLOR = 0xFFA500;    // Orange — applied to ALL embeds
+
+// ── Shop items ─────────────────────────────────────────────────
+// type "item"    → stored in inventory (max 5 slots)
+// type "service" → 1 active order slot per service, posts to #orders
+const SHOP_ITEMS = [
+  {
+    id: "booster_role",
+    label: "Booster Role",
+    price: 10,
+    type: "item",
+    description: "A shiny booster role for your profile",
+  },
+  {
+    id: "headshot_art",
+    label: "Headshot Art",
+    price: 500,
+    type: "service",
+    description: "A custom headshot art piece made for you",
+  },
+  {
+    id: "full_body_art",
+    label: "Full Body Art",
+    price: 1200,
+    type: "service",
+    description: "A custom full body art piece made for you",
+  },
+];
+
+// ── Active shop sessions ───────────────────────────────────────
+// Tracks message IDs for shops that are still within their 30s window.
+const activeSessions = new Set();
+
+// ── Data helpers ───────────────────────────────────────────────
+
+/** Load users.json — returns {} if missing or unreadable. */
+function loadData() {
+  try {
+    return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+/** Write the data object back to users.json. */
+function saveData(data) {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf8");
+}
+
+/**
+ * Fetch a user entry, auto-creating it if it doesn't exist.
+ * Schema: { balance: number, inventory: [], services: {} }
+ */
+function getUser(data, userId) {
+  if (!data[userId]) {
+    data[userId] = { balance: 0, inventory: [], services: {} };
+  }
+  // Back-fill fields for users created before this upgrade
+  if (!Array.isArray(data[userId].inventory)) data[userId].inventory = [];
+  if (typeof data[userId].services !== "object" || Array.isArray(data[userId].services)) {
+    data[userId].services = {};
+  }
+  return data[userId];
+}
+
+// ── Embed builders ─────────────────────────────────────────────
+
+/**
+ * The main TES MARKET shop embed.
+ * Shows the user's balance and the bot avatar as a thumbnail.
+ */
+function buildShopEmbed(balance, botAvatarUrl) {
+  return new EmbedBuilder()
+    .setTitle("🍀 TES MARKET")
+    .setDescription(
+      `─────────────────────\n` +
+      `💰 Your balance: **${balance} 🍀**`
+    )
+    .setColor(THEME_COLOR)
+    .setThumbnail(botAvatarUrl)
+    .setFooter({ text: "Click a button below to purchase. Session expires in 30s." });
+}
+
+/** Shown after the 30-second session window closes. */
+function buildExpiredEmbed(botAvatarUrl) {
+  return new EmbedBuilder()
+    .setTitle("🍀 TES MARKET")
+    .setDescription("─────────────────────\n❌ Session expired")
+    .setColor(THEME_COLOR)
+    .setThumbnail(botAvatarUrl);
+}
+
+// ── Button builders ────────────────────────────────────────────
+
+/** Active shop buttons (blue / clickable). */
+function buildShopButtons() {
+  const row = new ActionRowBuilder();
+  for (const item of SHOP_ITEMS) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`buy_${item.id}`)
+        .setLabel(item.label)
+        .setStyle(ButtonStyle.Primary)
+    );
+  }
+  return row;
+}
+
+/** Greyed-out disabled buttons shown after session expiry. */
+function buildDisabledButtons() {
+  const row = new ActionRowBuilder();
+  for (const item of SHOP_ITEMS) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`buy_${item.id}`)
+        .setLabel(item.label)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true)
+    );
+  }
+  return row;
+}
+
+// ── Discord client setup ───────────────────────────────────────
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent, // Privileged — enable in Discord Dev Portal
+  ],
+  partials: [Partials.Channel],
+});
+
+// ── Ready ──────────────────────────────────────────────────────
+client.once("clientReady", () => {
+  console.log(`✅ Bot is online! Logged in as ${client.user.tag}`);
+  console.log(`   Prefix: ${PREFIX}`);
+});
+
+// ── Message handler (prefix commands) ─────────────────────────
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+  if (!message.content.startsWith(PREFIX)) return;
+
+  const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
+  const command = args.shift().toLowerCase();
+
+  // ──────────────────────────────────────────────────────────────
+  // TES!balance
+  // Shows the caller's current token balance in an embed.
+  // ──────────────────────────────────────────────────────────────
+  if (command === "balance") {
+    const data = loadData();
+    const user = getUser(data, message.author.id);
+    saveData(data); // persist auto-created entry if needed
+
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("💰 Balance")
+          .setDescription(
+            `**${message.author.username}**, you have **${user.balance} 🍀**`
+          )
+          .setColor(THEME_COLOR)
+          .setThumbnail(client.user.displayAvatarURL()),
+      ],
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // TES!module add @user <amount>
+  // Admin-only: adds tokens to the mentioned user.
+  // ──────────────────────────────────────────────────────────────
+  if (command === "module") {
+    // Permission check
+    if (!message.member.permissions.has("Administrator")) {
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setDescription("❌ You do not have permission to use this command.")
+            .setColor(THEME_COLOR),
+        ],
+      });
+    }
+
+    const subcommand = args.shift()?.toLowerCase();
+
+    if (subcommand === "add") {
+      const target = message.mentions.users.first();
+      if (!target) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription("❌ Please mention a user.\nExample: `TES!module add @User 100`")
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      const amount = parseInt(args[args.length - 1], 10);
+      if (isNaN(amount) || amount <= 0) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription("❌ Please provide a valid positive number.\nExample: `TES!module add @User 100`")
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      const data = loadData();
+      const user = getUser(data, target.id);
+      user.balance += amount;
+      saveData(data);
+
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("✅ Tokens Added")
+            .setDescription(
+              `Added **${amount} 🍀** to ${target}.\n` +
+              `New balance: **${user.balance} 🍀**`
+            )
+            .setColor(THEME_COLOR)
+            .setThumbnail(client.user.displayAvatarURL()),
+        ],
+      });
+    }
+
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setDescription("❌ Unknown subcommand. Usage: `TES!module add @User <amount>`")
+          .setColor(THEME_COLOR),
+      ],
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // TES!shop
+  // Sends the TES MARKET embed with the user's balance and
+  // three purchase buttons. Expires after 30 seconds.
+  // ──────────────────────────────────────────────────────────────
+  if (command === "shop") {
+    const data = loadData();
+    const user = getUser(data, message.author.id);
+    saveData(data);
+
+    const botAvatar = client.user.displayAvatarURL();
+
+    // Send the shop message
+    const sent = await message.reply({
+      embeds: [buildShopEmbed(user.balance, botAvatar)],
+      components: [buildShopButtons()],
+    });
+
+    // Mark this message as an active session
+    activeSessions.add(sent.id);
+
+    // Expire after 30 seconds
+    setTimeout(async () => {
+      if (!activeSessions.has(sent.id)) return; // already handled
+      activeSessions.delete(sent.id);
+      try {
+        await sent.edit({
+          embeds: [buildExpiredEmbed(botAvatar)],
+          components: [buildDisabledButtons()],
+        });
+      } catch {
+        // Message was deleted before the timeout — ignore safely
+      }
+    }, SESSION_TIMEOUT_MS);
+  }
+});
+
+// ── Button interaction handler ─────────────────────────────────
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isButton()) return;
+  if (!interaction.customId.startsWith("buy_")) return;
+
+  // ── Session check ──────────────────────────────────────────────
+  // If the session has already expired, reject the interaction.
+  if (!activeSessions.has(interaction.message.id)) {
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setDescription("❌ This shop session has expired. Run `TES!shop` again.")
+          .setColor(THEME_COLOR),
+      ],
+      ephemeral: true,
+    });
+  }
+
+  // Resolve the item being purchased
+  const itemId = interaction.customId.replace("buy_", "");
+  const item = SHOP_ITEMS.find((i) => i.id === itemId);
+  if (!item) {
+    return interaction.reply({ content: "❌ Item not found.", ephemeral: true });
+  }
+
+  const data = loadData();
+  const user = getUser(data, interaction.user.id);
+
+  // ── Balance check ──────────────────────────────────────────────
+  if (user.balance < item.price) {
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setDescription(
+            `❌ Insufficient tokens.\n` +
+            `💰 Your balance: **${user.balance} 🍀**\n` +
+            `💸 Item cost: **${item.price} 🍀**`
+          )
+          .setColor(THEME_COLOR),
+      ],
+      ephemeral: true,
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // ITEM purchase (e.g. Booster Role)
+  // Goes into the user's inventory (max 5 slots).
+  // ══════════════════════════════════════════════════════════════
+  if (item.type === "item") {
+    if (user.inventory.length >= MAX_INVENTORY_SLOTS) {
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setDescription(
+              `❌ Full slots. You can hold a maximum of **${MAX_INVENTORY_SLOTS} items**.`
+            )
+            .setColor(THEME_COLOR),
+        ],
+        ephemeral: true,
+      });
+    }
+
+    user.balance -= item.price;
+    user.inventory.push({
+      id: item.id,
+      name: item.label,
+      acquiredAt: new Date().toISOString(),
+    });
+    saveData(data);
+
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("✅ Purchase Successful")
+          .setDescription(
+            `You purchased **${item.label}** for **${item.price} 🍀**!\n` +
+            `📦 Inventory: **${user.inventory.length}/${MAX_INVENTORY_SLOTS} slots**\n` +
+            `💰 Remaining balance: **${user.balance} 🍀**`
+          )
+          .setColor(THEME_COLOR)
+          .setThumbnail(client.user.displayAvatarURL()),
+      ],
+      ephemeral: true,
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // SERVICE purchase (e.g. Headshot Art, Full Body Art)
+  // Each user can have only 1 active order per service.
+  // Posts an order to the #orders channel.
+  // ══════════════════════════════════════════════════════════════
+  if (item.type === "service") {
+    // Check if this service slot is already taken
+    if (user.services[item.id]) {
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setDescription(
+              `❌ Slot full. You already have an active order for **${item.label}**.\n` +
+              `📊 Slots: **0/1 (Active Order)**`
+            )
+            .setColor(THEME_COLOR),
+        ],
+        ephemeral: true,
+      });
+    }
+
+    // Deduct tokens and mark the service slot as taken
+    user.balance -= item.price;
+    user.services[item.id] = true;
+    saveData(data);
+
+    // Find the #orders channel
+    const ordersChannel = interaction.guild.channels.cache.find(
+      (ch) => ch.name === "orders" && ch.isTextBased()
+    );
+
+    if (!ordersChannel) {
+      // Refund the user — the order couldn't be delivered
+      user.balance += item.price;
+      user.services[item.id] = false;
+      saveData(data);
+
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setDescription(
+              `⚠️ Could not place your order for **${item.label}**.\n` +
+              `No **#orders** channel was found. Ask an admin to create it.\n` +
+              `Your tokens have been refunded.`
+            )
+            .setColor(THEME_COLOR),
+        ],
+        ephemeral: true,
+      });
+    }
+
+    // Post the order to #orders
+    await ordersChannel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("📦 New Order")
+          .setDescription(
+            `👤 User: ${interaction.user}\n` +
+            `🛍️ Item: **${item.label}**\n` +
+            `📌 New order`
+          )
+          .setColor(THEME_COLOR),
+      ],
+    });
+
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("✅ Order Placed")
+          .setDescription(
+            `Your order for **${item.label}** has been placed!\n` +
+            `📬 Notification sent to **#orders**.\n` +
+            `📊 Slots: **0/1 (Active Order)**\n` +
+            `💰 Remaining balance: **${user.balance} 🍀**`
+          )
+          .setColor(THEME_COLOR)
+          .setThumbnail(client.user.displayAvatarURL()),
+      ],
+      ephemeral: true,
+    });
+  }
+});
+
+// ── Global error handling ──────────────────────────────────────
+client.on("error", (err) => {
+  console.error("❌ Discord client error:", err.message);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("❌ Unhandled promise rejection:", reason);
+});
+
+// ── Login ──────────────────────────────────────────────────────
+const token = process.env.DISCORD_BOT_TOKEN;
+
+if (!token) {
+  console.error("❌ DISCORD_BOT_TOKEN is not set! Add it to Replit Secrets.");
+  process.exit(1);
+}
+
+client.login(token).catch((err) => {
+  console.error("❌ Failed to log in:", err.message);
+  process.exit(1);
+});

@@ -3,13 +3,19 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: TES Discord Bot API specification
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: bot
+    description: Bot status and control
+  - name: users
+    description: User economy management
+  - name: shop
+    description: Shop items and orders
 paths:
   /healthz:
     get:
@@ -24,6 +30,214 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /bot/status:
+    get:
+      operationId: getBotStatus
+      tags: [bot]
+      summary: Get bot status
+      description: Returns the current status of the Discord bot
+      responses:
+        "200":
+          description: Bot status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotStatus"
+
+  /bot/stats:
+    get:
+      operationId: getBotStats
+      tags: [bot]
+      summary: Get bot statistics
+      description: Returns aggregate statistics about the bot
+      responses:
+        "200":
+          description: Bot statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotStats"
+
+  /users:
+    get:
+      operationId: getUsers
+      tags: [users]
+      summary: Get all users
+      description: Returns all registered users with their balances and inventories
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search by Discord user ID or username
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+            enum: [balance, username, createdAt]
+          description: Field to sort by
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+          description: Sort order
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+
+  /users/{userId}:
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: Get a specific user
+      description: Returns a specific user's data by Discord ID
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: User data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /users/{userId}/balance:
+    patch:
+      operationId: updateUserBalance
+      tags: [users]
+      summary: Update user balance
+      description: Admin endpoint to add or set tokens for a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBalanceBody"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /shop/items:
+    get:
+      operationId: getShopItems
+      tags: [shop]
+      summary: Get shop items
+      description: Returns all items available in the TES shop
+      responses:
+        "200":
+          description: List of shop items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ShopItem"
+
+  /shop/orders:
+    get:
+      operationId: getOrders
+      tags: [shop]
+      summary: Get all orders
+      description: Returns all service orders placed in the shop
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, completed, cancelled]
+          description: Filter by order status
+      responses:
+        "200":
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+
+  /shop/orders/{orderId}:
+    patch:
+      operationId: updateOrderStatus
+      tags: [shop]
+      summary: Update order status
+      description: Update the status of a service order
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateOrderStatusBody"
+      responses:
+        "200":
+          description: Updated order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /shop/activity:
+    get:
+      operationId: getShopActivity
+      tags: [shop]
+      summary: Get recent shop activity
+      description: Returns recent shop transactions and events
+      responses:
+        "200":
+          description: Recent activity
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityEvent"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +248,223 @@ components:
       required:
         - status
 
+    BotStatus:
+      type: object
+      properties:
+        online:
+          type: boolean
+        tag:
+          type: string
+          nullable: true
+        uptime:
+          type: number
+          nullable: true
+        guildCount:
+          type: integer
+        prefix:
+          type: string
+      required:
+        - online
+        - tag
+        - uptime
+        - guildCount
+        - prefix
+
+    BotStats:
+      type: object
+      properties:
+        totalUsers:
+          type: integer
+        totalTokensInCirculation:
+          type: number
+        totalOrders:
+          type: integer
+        pendingOrders:
+          type: integer
+        topBalances:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserBalance"
+      required:
+        - totalUsers
+        - totalTokensInCirculation
+        - totalOrders
+        - pendingOrders
+        - topBalances
+
+    UserBalance:
+      type: object
+      properties:
+        userId:
+          type: string
+        username:
+          type: string
+        balance:
+          type: number
+      required:
+        - userId
+        - username
+        - balance
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        discordId:
+          type: string
+        username:
+          type: string
+        balance:
+          type: number
+        inventory:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryItem"
+        services:
+          type: object
+          additionalProperties:
+            type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - discordId
+        - username
+        - balance
+        - inventory
+        - services
+        - createdAt
+        - updatedAt
+
+    InventoryItem:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        acquiredAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - acquiredAt
+
+    UpdateBalanceBody:
+      type: object
+      properties:
+        amount:
+          type: number
+        operation:
+          type: string
+          enum: [add, subtract, set]
+      required:
+        - amount
+        - operation
+
+    ShopItem:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        price:
+          type: number
+        type:
+          type: string
+          enum: [item, service]
+        description:
+          type: string
+      required:
+        - id
+        - label
+        - price
+        - type
+        - description
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: string
+        username:
+          type: string
+        itemId:
+          type: string
+        itemLabel:
+          type: string
+        price:
+          type: number
+        status:
+          type: string
+          enum: [pending, completed, cancelled]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - userId
+        - username
+        - itemId
+        - itemLabel
+        - price
+        - status
+        - createdAt
+        - updatedAt
+
+    UpdateOrderStatusBody:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [pending, completed, cancelled]
+      required:
+        - status
+
+    ActivityEvent:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [purchase, token_add, order_placed, order_completed]
+        userId:
+          type: string
+        username:
+          type: string
+        description:
+          type: string
+        amount:
+          type: number
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - type
+        - userId
+        - username
+        - description
+        - createdAt
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error

@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "TES Bot Dashboard"
+version = "1.0.0"
+id = "artifacts/tes-dashboard"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22418
+
+[services.development]
+run = "pnpm --filter @workspace/tes-dashboard run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/tes-dashboard", "run", "build" ]
+publicDir = "artifacts/tes-dashboard/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22418"
+BASE_PATH = "/"
