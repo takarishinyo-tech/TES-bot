@@ -131,7 +131,7 @@ function buildShopButtons(soldOut: SoldOutMap) {
     const isSoldOut = soldOut[item.id] ?? false;
     row.addComponents(
       new ButtonBuilder()
-        .setCustomId(`buy_${item.id}`)
+        .setCustomId(`view_${item.id}`)
         .setLabel(isSoldOut ? `${item.label} (Sold Out)` : item.label)
         .setStyle(isSoldOut ? ButtonStyle.Secondary : ButtonStyle.Primary)
         .setDisabled(isSoldOut)
@@ -146,12 +146,54 @@ function buildDisabledButtons(soldOut: SoldOutMap) {
     const isSoldOut = soldOut[item.id] ?? false;
     row.addComponents(
       new ButtonBuilder()
-        .setCustomId(`buy_${item.id}`)
+        .setCustomId(`view_${item.id}`)
         .setLabel(isSoldOut ? `${item.label} (Sold Out)` : item.label)
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(true)
     );
   }
+  return row;
+}
+
+function buildItemDetailEmbed(
+  item: typeof SHOP_ITEMS[number],
+  balance: number,
+  soldOut: boolean,
+  botAvatarUrl: string
+) {
+  const stockLine = item.type === "item" ? "∞" : soldOut ? "0 (Active Order)" : "1 slot available";
+  const typeLine = item.type === "item" ? "Item" : "Commission Service";
+  return new EmbedBuilder()
+    .setTitle(`🛒 ${item.label}`)
+    .setDescription(item.description)
+    .addFields(
+      { name: "Stock", value: stockLine, inline: true },
+      { name: "Cost", value: `${item.price} 🍀`, inline: true },
+      { name: "Type", value: typeLine, inline: true },
+      { name: "Your Balance", value: `${balance} 🍀`, inline: false }
+    )
+    .setColor(THEME_COLOR)
+    .setThumbnail(botAvatarUrl);
+}
+
+function buildItemDetailButtons(item: typeof SHOP_ITEMS[number], balance: number, soldOut: boolean) {
+  const canAfford = balance >= item.price;
+  const row = new ActionRowBuilder<ButtonBuilder>();
+  row.addComponents(
+    new ButtonBuilder()
+      .setCustomId(`confirm_${item.id}`)
+      .setLabel(soldOut ? "Sold Out" : canAfford ? "✅ Buy" : "🔨 Can't Afford")
+      .setStyle(soldOut || !canAfford ? ButtonStyle.Danger : ButtonStyle.Success)
+      .setDisabled(soldOut || !canAfford),
+    new ButtonBuilder()
+      .setCustomId("back_shop")
+      .setLabel("↩️ Back to Shop")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("leave_shop")
+      .setLabel("❌ Leave Shop")
+      .setStyle(ButtonStyle.Danger)
+  );
   return row;
 }
 
@@ -613,214 +655,247 @@ discordClient.on("messageCreate", async (message) => {
 
 discordClient.on("interactionCreate", async (interaction) => {
   if (!interaction.isButton()) return;
-  if (!interaction.customId.startsWith("buy_")) return;
 
+  const { customId } = interaction;
+  const isShopButton =
+    customId.startsWith("view_") ||
+    customId.startsWith("confirm_") ||
+    customId === "back_shop" ||
+    customId === "leave_shop";
+  if (!isShopButton) return;
+
+  // ── Session expired check ──────────────────────────────────────
   if (!activeSessions.has(interaction.message.id)) {
     return interaction.reply({
       embeds: [
         new EmbedBuilder()
-          .setDescription(
-            "❌ This shop session has expired. Run `TES!shop` again."
-          )
+          .setDescription("❌ This shop session has expired. Run `TES!shop` again.")
           .setColor(THEME_COLOR),
       ],
       ephemeral: true,
     });
   }
 
-  const itemId = interaction.customId.replace("buy_", "");
-  const item = SHOP_ITEMS.find((i) => i.id === itemId);
-  if (!item) {
-    return interaction.reply({ content: "❌ Item not found.", ephemeral: true });
+  const botAvatar = discordClient.user!.displayAvatarURL();
+
+  // ── Leave Shop ─────────────────────────────────────────────────
+  if (customId === "leave_shop") {
+    activeSessions.delete(interaction.message.id);
+    userActiveShop.delete(interaction.user.id);
+    shopCooldowns.set(interaction.user.id, Date.now());
+    await interaction.deferUpdate();
+    try { await interaction.message.delete(); } catch { /* already gone */ }
+    return;
   }
 
-  const user = await getOrCreateUser(
-    interaction.user.id,
-    interaction.user.username
-  );
-  const currentBalance = parseFloat(user.balance?.toString() ?? "0");
-
-  if (currentBalance < item.price) {
-    return interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setDescription(
-            `❌ Insufficient tokens.\n` +
-              `💰 Your balance: **${currentBalance} 🍀**\n` +
-              `💸 Item cost: **${item.price} 🍀**`
-          )
-          .setColor(THEME_COLOR),
-      ],
-      ephemeral: true,
+  // ── Back to Shop ───────────────────────────────────────────────
+  if (customId === "back_shop") {
+    const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const soldOut = computeSoldOut(user as any);
+    return interaction.update({
+      embeds: [buildShopEmbed(user.balance?.toString() ?? "0", botAvatar, soldOut)],
+      components: [buildShopButtons(soldOut)],
     });
   }
 
-  if (item.type === "item") {
-    const inventory = Array.isArray(user.inventory) ? user.inventory : [];
-    if (inventory.length >= MAX_INVENTORY_SLOTS) {
-      return interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription(
-              `❌ Full slots. You can hold a maximum of **${MAX_INVENTORY_SLOTS} items**.`
-            )
-            .setColor(THEME_COLOR),
-        ],
-        ephemeral: true,
+  // ── View Item Detail ───────────────────────────────────────────
+  if (customId.startsWith("view_")) {
+    const itemId = customId.replace("view_", "");
+    const item = SHOP_ITEMS.find((i) => i.id === itemId);
+    if (!item) return interaction.reply({ content: "❌ Item not found.", ephemeral: true });
+
+    const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const balance = parseFloat(user.balance?.toString() ?? "0");
+    const soldOut = computeSoldOut(user as any);
+    const isSoldOut = soldOut[item.id] ?? false;
+
+    return interaction.update({
+      embeds: [buildItemDetailEmbed(item, balance, isSoldOut, botAvatar)],
+      components: [buildItemDetailButtons(item, balance, isSoldOut)],
+    });
+  }
+
+  // ── Confirm Purchase ───────────────────────────────────────────
+  if (customId.startsWith("confirm_")) {
+    const itemId = customId.replace("confirm_", "");
+    const item = SHOP_ITEMS.find((i) => i.id === itemId);
+    if (!item) return interaction.reply({ content: "❌ Item not found.", ephemeral: true });
+
+    const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
+    const currentBalance = parseFloat(user.balance?.toString() ?? "0");
+    const soldOut = computeSoldOut(user as any);
+
+    // Guard: can't afford
+    if (currentBalance < item.price) {
+      const isSoldOut = soldOut[item.id] ?? false;
+      return interaction.update({
+        embeds: [buildItemDetailEmbed(item, currentBalance, isSoldOut, botAvatar)],
+        components: [buildItemDetailButtons(item, currentBalance, isSoldOut)],
       });
     }
 
-    const newBalance = currentBalance - item.price;
-    const newInventory = [
-      ...inventory,
-      { id: item.id, name: item.label, acquiredAt: new Date().toISOString() },
-    ];
+    // ── Item purchase ──────────────────────────────────────────
+    if (item.type === "item") {
+      const inventory = Array.isArray(user.inventory) ? user.inventory : [];
+      if (inventory.length >= MAX_INVENTORY_SLOTS) {
+        return interaction.update({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle("❌ Inventory Full")
+              .setDescription(`You can only hold **${MAX_INVENTORY_SLOTS} items**. Remove something first.`)
+              .setColor(THEME_COLOR),
+          ],
+          components: [
+            new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId("back_shop").setLabel("↩️ Back to Shop").setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder().setCustomId("leave_shop").setLabel("❌ Leave Shop").setStyle(ButtonStyle.Danger)
+            ),
+          ],
+        });
+      }
 
-    await db
-      .update(usersTable)
-      .set({
-        balance: newBalance.toString(),
-        inventory: newInventory,
-        updatedAt: new Date(),
-      })
-      .where(eq(usersTable.discordId, interaction.user.id));
+      const newBalance = currentBalance - item.price;
+      const newInventory = [
+        ...inventory,
+        { id: item.id, name: item.label, acquiredAt: new Date().toISOString() },
+      ];
 
-    await db.insert(activityTable).values({
-      type: "purchase",
-      userId: interaction.user.id,
-      username: interaction.user.username,
-      description: `Purchased ${item.label}`,
-      amount: item.price.toString(),
-    });
+      await db.update(usersTable).set({ balance: newBalance.toString(), inventory: newInventory, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, interaction.user.id));
+      await db.insert(activityTable).values({
+        type: "purchase",
+        userId: interaction.user.id,
+        username: interaction.user.username,
+        description: `Purchased ${item.label}`,
+        amount: item.price.toString(),
+      });
 
-    return interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("✅ Purchase Successful")
-          .setDescription(
-            `You purchased **${item.label}** for **${item.price} 🍀**!\n` +
+      // Show success then close
+      activeSessions.delete(interaction.message.id);
+      userActiveShop.delete(interaction.user.id);
+      shopCooldowns.set(interaction.user.id, Date.now());
+
+      await interaction.update({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("✅ Purchase Successful")
+            .setDescription(
+              `You purchased **${item.label}** for **${item.price} 🍀**!\n` +
               `📦 Inventory: **${newInventory.length}/${MAX_INVENTORY_SLOTS} slots**\n` +
               `💰 Remaining balance: **${newBalance} 🍀**`
-          )
-          .setColor(THEME_COLOR)
-          .setThumbnail(discordClient.user!.displayAvatarURL()),
-      ],
-      ephemeral: true,
-    });
-  }
-
-  if (item.type === "service") {
-    const services = user.services ?? {};
-    if (services[item.id]) {
-      return interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setDescription(
-              `❌ Slot full. You already have an active order for **${item.label}**.\n` +
-                `📊 Slots: **0/1 (Active Order)**`
             )
-            .setColor(THEME_COLOR),
+            .setColor(0x57f287)
+            .setThumbnail(botAvatar),
         ],
-        ephemeral: true,
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId("leave_shop").setLabel("Close").setStyle(ButtonStyle.Secondary)
+          ),
+        ],
       });
+      return;
     }
 
-    const newBalance = currentBalance - item.price;
-    const newServices = { ...services, [item.id]: true };
+    // ── Service purchase ───────────────────────────────────────
+    if (item.type === "service") {
+      const services = user.services ?? {};
+      if (services[item.id]) {
+        return interaction.update({
+          embeds: [buildItemDetailEmbed(item, currentBalance, true, botAvatar)],
+          components: [buildItemDetailButtons(item, currentBalance, true)],
+        });
+      }
 
-    await db
-      .update(usersTable)
-      .set({
-        balance: newBalance.toString(),
-        services: newServices,
-        updatedAt: new Date(),
-      })
-      .where(eq(usersTable.discordId, interaction.user.id));
+      const newBalance = currentBalance - item.price;
+      const newServices = { ...services, [item.id]: true };
 
-    const [order] = await db
-      .insert(ordersTable)
-      .values({
+      await db.update(usersTable).set({ balance: newBalance.toString(), services: newServices, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, interaction.user.id));
+
+      const [order] = await db.insert(ordersTable).values({
         userId: interaction.user.id,
         username: interaction.user.username,
         itemId: item.id,
         itemLabel: item.label,
         price: item.price.toString(),
         status: "pending",
-      })
-      .returning();
+      }).returning();
 
-    await db.insert(activityTable).values({
-      type: "order_placed",
-      userId: interaction.user.id,
-      username: interaction.user.username,
-      description: `Ordered ${item.label}`,
-      amount: item.price.toString(),
-    });
+      await db.insert(activityTable).values({
+        type: "order_placed",
+        userId: interaction.user.id,
+        username: interaction.user.username,
+        description: `Ordered ${item.label}`,
+        amount: item.price.toString(),
+      });
 
-    const ordersChannel = interaction.guild?.channels.cache.find(
-      (ch) => ch.name === "orders" && ch.isTextBased()
-    );
+      const ordersChannel = interaction.guild?.channels.cache.find(
+        (ch) => ch.name === "orders" && ch.isTextBased()
+      );
 
-    if (!ordersChannel) {
-      await db
-        .update(usersTable)
-        .set({
-          balance: currentBalance.toString(),
-          services,
-          updatedAt: new Date(),
-        })
-        .where(eq(usersTable.discordId, interaction.user.id));
+      if (!ordersChannel) {
+        // Refund
+        await db.update(usersTable).set({ balance: currentBalance.toString(), services, updatedAt: new Date() })
+          .where(eq(usersTable.discordId, interaction.user.id));
+        if (order) await db.delete(ordersTable).where(eq(ordersTable.id, order.id));
 
-      if (order) {
-        await db
-          .delete(ordersTable)
-          .where(eq(ordersTable.id, order.id));
+        return interaction.update({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle("⚠️ Order Failed")
+              .setDescription(
+                `Could not place your order for **${item.label}**.\n` +
+                `No **#orders** channel found. Ask an admin to create it.\n` +
+                `Your tokens have been refunded.`
+              )
+              .setColor(THEME_COLOR),
+          ],
+          components: [
+            new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder().setCustomId("back_shop").setLabel("↩️ Back to Shop").setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder().setCustomId("leave_shop").setLabel("❌ Leave Shop").setStyle(ButtonStyle.Danger)
+            ),
+          ],
+        });
       }
 
-      return interaction.reply({
+      if (ordersChannel.isTextBased()) {
+        await ordersChannel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle("📦 New Order")
+              .setDescription(`👤 User: ${interaction.user}\n🛍️ Item: **${item.label}**\n📌 New order`)
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      // Show success then allow close
+      activeSessions.delete(interaction.message.id);
+      userActiveShop.delete(interaction.user.id);
+      shopCooldowns.set(interaction.user.id, Date.now());
+
+      await interaction.update({
         embeds: [
           new EmbedBuilder()
+            .setTitle("✅ Order Placed")
             .setDescription(
-              `⚠️ Could not place your order for **${item.label}**.\n` +
-                `No **#orders** channel was found. Ask an admin to create it.\n` +
-                `Your tokens have been refunded.`
-            )
-            .setColor(THEME_COLOR),
-        ],
-        ephemeral: true,
-      });
-    }
-
-    if (ordersChannel.isTextBased()) {
-      await ordersChannel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("📦 New Order")
-            .setDescription(
-              `👤 User: ${interaction.user}\n` +
-                `🛍️ Item: **${item.label}**\n` +
-                `📌 New order`
-            )
-            .setColor(THEME_COLOR),
-        ],
-      });
-    }
-
-    return interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("✅ Order Placed")
-          .setDescription(
-            `Your order for **${item.label}** has been placed!\n` +
+              `Your order for **${item.label}** has been placed!\n` +
               `📬 Notification sent to **#orders**.\n` +
               `📊 Slots: **0/1 (Active Order)**\n` +
               `💰 Remaining balance: **${newBalance} 🍀**`
-          )
-          .setColor(THEME_COLOR)
-          .setThumbnail(discordClient.user!.displayAvatarURL()),
-      ],
-      ephemeral: true,
-    });
+            )
+            .setColor(0x57f287)
+            .setThumbnail(botAvatar),
+        ],
+        components: [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId("leave_shop").setLabel("Close").setStyle(ButtonStyle.Secondary)
+          ),
+        ],
+      });
+      return;
+    }
   }
 });
 
