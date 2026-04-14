@@ -170,60 +170,57 @@ discordClient.on("messageCreate", async (message) => {
 
     const subcommand = args.shift()?.toLowerCase();
 
-    if (subcommand === "add") {
+    // ── Helper: resolve @mention and amount from remaining args ───
+    const resolveTargetAndAmount = () => {
       const target = message.mentions.users.first();
+      const amount = parseInt(args[args.length - 1], 10);
+      return { target, amount };
+    };
+
+    // ── TES!module give @user <amount> ────────────────────────────
+    if (subcommand === "give") {
+      const { target, amount } = resolveTargetAndAmount();
       if (!target) {
         return message.reply({
           embeds: [
             new EmbedBuilder()
-              .setDescription(
-                "❌ Please mention a user.\nExample: `TES!module add @User 100`"
-              )
+              .setDescription("❌ Please mention a user.\nUsage: `TES!module give @User <amount>`")
               .setColor(THEME_COLOR),
           ],
         });
       }
-
-      const amount = parseInt(args[args.length - 1], 10);
       if (isNaN(amount) || amount <= 0) {
         return message.reply({
           embeds: [
             new EmbedBuilder()
-              .setDescription(
-                "❌ Please provide a valid positive number.\nExample: `TES!module add @User 100`"
-              )
+              .setDescription("❌ Provide a valid positive number.\nUsage: `TES!module give @User <amount>`")
               .setColor(THEME_COLOR),
           ],
         });
       }
 
       const user = await getOrCreateUser(target.id, target.username);
-      const newBalance =
-        parseFloat(user.balance?.toString() ?? "0") + amount;
+      const newBalance = parseFloat(user.balance?.toString() ?? "0") + amount;
 
-      await db
-        .update(usersTable)
-        .set({
-          balance: newBalance.toString(),
-          updatedAt: new Date(),
-        })
+      await db.update(usersTable)
+        .set({ balance: newBalance.toString(), updatedAt: new Date() })
         .where(eq(usersTable.discordId, target.id));
 
       await db.insert(activityTable).values({
         type: "token_add",
         userId: target.id,
         username: target.username,
-        description: `Admin added ${amount} tokens`,
+        description: `Admin gave ${amount} tokens`,
         amount: amount.toString(),
       });
 
       return message.reply({
         embeds: [
           new EmbedBuilder()
-            .setTitle("✅ Tokens Added")
+            .setTitle("✅ Tokens Given")
             .setDescription(
-              `Added **${amount} 🍀** to ${target}.\n` +
-                `New balance: **${newBalance} 🍀**`
+              `Gave **${amount} 🍀** to ${target}.\n` +
+              `New balance: **${newBalance} 🍀**`
             )
             .setColor(THEME_COLOR)
             .setThumbnail(discordClient.user!.displayAvatarURL()),
@@ -231,11 +228,258 @@ discordClient.on("messageCreate", async (message) => {
       });
     }
 
+    // ── TES!module take @user <amount> ────────────────────────────
+    if (subcommand === "take") {
+      const { target, amount } = resolveTargetAndAmount();
+      if (!target) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription("❌ Please mention a user.\nUsage: `TES!module take @User <amount>`")
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+      if (isNaN(amount) || amount <= 0) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription("❌ Provide a valid positive number.\nUsage: `TES!module take @User <amount>`")
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      const user = await getOrCreateUser(target.id, target.username);
+      const current = parseFloat(user.balance?.toString() ?? "0");
+      const newBalance = Math.max(0, current - amount);
+      const taken = current - newBalance;
+
+      await db.update(usersTable)
+        .set({ balance: newBalance.toString(), updatedAt: new Date() })
+        .where(eq(usersTable.discordId, target.id));
+
+      await db.insert(activityTable).values({
+        type: "token_add",
+        userId: target.id,
+        username: target.username,
+        description: `Admin took ${taken} tokens`,
+        amount: (-taken).toString(),
+      });
+
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("✅ Tokens Taken")
+            .setDescription(
+              `Took **${taken} 🍀** from ${target}.\n` +
+              `New balance: **${newBalance} 🍀**`
+            )
+            .setColor(THEME_COLOR)
+            .setThumbnail(discordClient.user!.displayAvatarURL()),
+        ],
+      });
+    }
+
+    // ── TES!module add @user <item> <slots> ───────────────────────
+    // Adds <slots> copies of an item directly into a user's inventory.
+    if (subcommand === "add") {
+      const target = message.mentions.users.first();
+      if (!target) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(
+                "❌ Please mention a user.\nUsage: `TES!module add @User <item> <slots>`\n" +
+                "Items: `booster_role` · `headshot_art` · `full_body_art`"
+              )
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      // args = [<@id>, itemKeyword, slots]  — mention is consumed from content by Discord
+      // After shift() for subcommand, args still contains mention + item + slots
+      // Remove the mention token from args
+      const cleanArgs = args.filter(a => !a.startsWith("<@"));
+      const itemKeyword = cleanArgs[cleanArgs.length - 2]?.toLowerCase();
+      const slots = parseInt(cleanArgs[cleanArgs.length - 1], 10);
+
+      const item = SHOP_ITEMS.find(
+        (i) =>
+          i.id === itemKeyword ||
+          i.label.toLowerCase().includes(itemKeyword ?? "") ||
+          i.id.includes(itemKeyword ?? "")
+      );
+
+      if (!item) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(
+                "❌ Unknown item.\nAvailable items: `booster_role` · `headshot_art` · `full_body_art`"
+              )
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      if (isNaN(slots) || slots <= 0) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription("❌ Provide a valid number of slots.\nUsage: `TES!module add @User <item> <slots>`")
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      const user = await getOrCreateUser(target.id, target.username);
+      const inventory = Array.isArray(user.inventory) ? user.inventory : [];
+      const newItems = Array.from({ length: slots }, () => ({
+        id: item.id,
+        name: item.label,
+        acquiredAt: new Date().toISOString(),
+      }));
+      const newInventory = [...inventory, ...newItems];
+
+      await db.update(usersTable)
+        .set({ inventory: newInventory, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, target.id));
+
+      await db.insert(activityTable).values({
+        type: "purchase",
+        userId: target.id,
+        username: target.username,
+        description: `Admin added ${slots}x ${item.label} to inventory`,
+        amount: null,
+      });
+
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("✅ Item Added")
+            .setDescription(
+              `Added **${slots}x ${item.label}** to ${target}'s inventory.\n` +
+              `📦 Inventory: **${newInventory.length} slots used**`
+            )
+            .setColor(THEME_COLOR)
+            .setThumbnail(discordClient.user!.displayAvatarURL()),
+        ],
+      });
+    }
+
+    // ── TES!module remove @user <item> <slots> ────────────────────
+    // Removes <slots> copies of an item from a user's inventory.
+    if (subcommand === "remove") {
+      const target = message.mentions.users.first();
+      if (!target) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(
+                "❌ Please mention a user.\nUsage: `TES!module remove @User <item> <slots>`\n" +
+                "Items: `booster_role` · `headshot_art` · `full_body_art`"
+              )
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      const cleanArgs = args.filter(a => !a.startsWith("<@"));
+      const itemKeyword = cleanArgs[cleanArgs.length - 2]?.toLowerCase();
+      const slots = parseInt(cleanArgs[cleanArgs.length - 1], 10);
+
+      const item = SHOP_ITEMS.find(
+        (i) =>
+          i.id === itemKeyword ||
+          i.label.toLowerCase().includes(itemKeyword ?? "") ||
+          i.id.includes(itemKeyword ?? "")
+      );
+
+      if (!item) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(
+                "❌ Unknown item.\nAvailable items: `booster_role` · `headshot_art` · `full_body_art`"
+              )
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      if (isNaN(slots) || slots <= 0) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription("❌ Provide a valid number of slots.\nUsage: `TES!module remove @User <item> <slots>`")
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      const user = await getOrCreateUser(target.id, target.username);
+      const inventory = Array.isArray(user.inventory) ? user.inventory : [];
+
+      let removed = 0;
+      const newInventory = [...inventory];
+      for (let i = newInventory.length - 1; i >= 0 && removed < slots; i--) {
+        if (newInventory[i].id === item.id) {
+          newInventory.splice(i, 1);
+          removed++;
+        }
+      }
+
+      if (removed === 0) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(`❌ ${target} has no **${item.label}** in their inventory.`)
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      await db.update(usersTable)
+        .set({ inventory: newInventory, updatedAt: new Date() })
+        .where(eq(usersTable.discordId, target.id));
+
+      await db.insert(activityTable).values({
+        type: "purchase",
+        userId: target.id,
+        username: target.username,
+        description: `Admin removed ${removed}x ${item.label} from inventory`,
+        amount: null,
+      });
+
+      return message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("✅ Item Removed")
+            .setDescription(
+              `Removed **${removed}x ${item.label}** from ${target}'s inventory.\n` +
+              `📦 Inventory: **${newInventory.length} slots used**`
+            )
+            .setColor(THEME_COLOR)
+            .setThumbnail(discordClient.user!.displayAvatarURL()),
+        ],
+      });
+    }
+
+    // ── Unknown module subcommand ──────────────────────────────────
     return message.reply({
       embeds: [
         new EmbedBuilder()
+          .setTitle("📋 TES!module — Admin Commands")
           .setDescription(
-            "❌ Unknown subcommand. Usage: `TES!module add @User <amount>`"
+            "**Token Management**\n" +
+            "`TES!module give @User <amount>` — Give tokens to a user\n" +
+            "`TES!module take @User <amount>` — Take tokens from a user\n\n" +
+            "**Inventory Management**\n" +
+            "`TES!module add @User <item> <slots>` — Add item slots to a user\n" +
+            "`TES!module remove @User <item> <slots>` — Remove item slots from a user\n\n" +
+            "**Items:** `booster_role` · `headshot_art` · `full_body_art`"
           )
           .setColor(THEME_COLOR),
       ],
@@ -273,13 +517,19 @@ discordClient.on("messageCreate", async (message) => {
   }
 
   // ── Unknown command catch-all ──────────────────────────────────
-  // Any other TES! prefix command is not recognized.
   return message.reply({
     embeds: [
       new EmbedBuilder()
+        .setTitle("❌ Unknown Command")
         .setDescription(
-          `❌ Unknown command: \`TES!${command}\`\n` +
-            `Available commands: \`TES!balance\` · \`TES!shop\` · \`TES!module\``
+          `\`TES!${command}\` is not a valid command.\n\n` +
+          `**Available commands:**\n` +
+          `\`TES!balance\` — Check your token balance\n` +
+          `\`TES!shop\` — Open the TES Market\n` +
+          `\`TES!module give @User <amount>\` — Give tokens *(Admin)*\n` +
+          `\`TES!module take @User <amount>\` — Take tokens *(Admin)*\n` +
+          `\`TES!module add @User <item> <slots>\` — Add items *(Admin)*\n` +
+          `\`TES!module remove @User <item> <slots>\` — Remove items *(Admin)*`
         )
         .setColor(THEME_COLOR),
     ],
