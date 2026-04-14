@@ -43,6 +43,10 @@ const SHOP_ITEMS = [
 
 const activeSessions = new Set<string>();
 
+// Tracks when a session last expired per user (for 15s reopen cooldown)
+const shopCooldowns = new Map<string, number>();
+const SHOP_COOLDOWN_MS = 15_000;
+
 let botStartTime = Date.now();
 
 export const discordClient = new Client({
@@ -79,52 +83,88 @@ async function getOrCreateUser(discordId: string, username: string) {
   return newUser;
 }
 
-function buildShopEmbed(balance: string, botAvatarUrl: string) {
+type SoldOutMap = Record<string, boolean>;
+
+function buildShopEmbed(balance: string, botAvatarUrl: string, soldOut: SoldOutMap) {
+  const lines = SHOP_ITEMS.map((item) => {
+    const status = soldOut[item.id] ? "Sold Out" : "Available";
+    return `**${item.label}** — ${status} | ${item.price} 🍀`;
+  });
+
   return new EmbedBuilder()
     .setTitle("🍀 TES MARKET")
     .setDescription(
-      `─────────────────────\n` + `💰 Your balance: **${balance} 🍀**`
+      `─────────────────────\n` +
+      lines.join("\n") +
+      `\n\nYour balance: **${balance} 🍀**`
     )
     .setColor(THEME_COLOR)
     .setThumbnail(botAvatarUrl)
     .setFooter({
-      text: "Click a button below to purchase. Session expires in 30s.",
+      text: "Session expires in 30s. Cannot reopen for 15s after.",
     });
 }
 
-function buildExpiredEmbed(botAvatarUrl: string) {
+function buildExpiredEmbed(botAvatarUrl: string, soldOut: SoldOutMap) {
+  const lines = SHOP_ITEMS.map((item) => {
+    const status = soldOut[item.id] ? "Sold Out" : "Available";
+    return `**${item.label}** — ${status} | ${item.price} 🍀`;
+  });
+
   return new EmbedBuilder()
     .setTitle("🍀 TES MARKET")
-    .setDescription("─────────────────────\n❌ Session expired")
+    .setDescription(
+      `─────────────────────\n` +
+      lines.join("\n") +
+      `\n\n❌ Session expired`
+    )
     .setColor(THEME_COLOR)
     .setThumbnail(botAvatarUrl);
 }
 
-function buildShopButtons() {
+function buildShopButtons(soldOut: SoldOutMap) {
   const row = new ActionRowBuilder<ButtonBuilder>();
   for (const item of SHOP_ITEMS) {
+    const isSoldOut = soldOut[item.id] ?? false;
     row.addComponents(
       new ButtonBuilder()
         .setCustomId(`buy_${item.id}`)
-        .setLabel(item.label)
-        .setStyle(ButtonStyle.Primary)
+        .setLabel(isSoldOut ? `${item.label} (Sold Out)` : item.label)
+        .setStyle(isSoldOut ? ButtonStyle.Secondary : ButtonStyle.Primary)
+        .setDisabled(isSoldOut)
     );
   }
   return row;
 }
 
-function buildDisabledButtons() {
+function buildDisabledButtons(soldOut: SoldOutMap) {
   const row = new ActionRowBuilder<ButtonBuilder>();
   for (const item of SHOP_ITEMS) {
+    const isSoldOut = soldOut[item.id] ?? false;
     row.addComponents(
       new ButtonBuilder()
         .setCustomId(`buy_${item.id}`)
-        .setLabel(item.label)
+        .setLabel(isSoldOut ? `${item.label} (Sold Out)` : item.label)
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(true)
     );
   }
   return row;
+}
+
+/** Compute which items are "sold out" for a given user */
+function computeSoldOut(user: { inventory: { id: string }[] | null; services: Record<string, boolean> | null; }): SoldOutMap {
+  const inventory = Array.isArray(user.inventory) ? user.inventory : [];
+  const services = user.services ?? {};
+  const result: SoldOutMap = {};
+  for (const item of SHOP_ITEMS) {
+    if (item.type === "item") {
+      result[item.id] = inventory.length >= MAX_INVENTORY_SLOTS;
+    } else {
+      result[item.id] = services[item.id] === true;
+    }
+  }
+  return result;
 }
 
 discordClient.once("clientReady", () => {
@@ -487,16 +527,32 @@ discordClient.on("messageCreate", async (message) => {
   }
 
   if (command === "shop") {
+    // ── 15-second reopen cooldown ──────────────────────────────────
+    const lastExpiry = shopCooldowns.get(message.author.id);
+    if (lastExpiry) {
+      const remaining = Math.ceil((lastExpiry + SHOP_COOLDOWN_MS - Date.now()) / 1000);
+      if (remaining > 0) {
+        return message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription(`❌ You must wait **${remaining}s** before reopening the shop.`)
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+    }
+
     const user = await getOrCreateUser(
       message.author.id,
       message.author.username
     );
 
+    const soldOut = computeSoldOut(user as any);
     const botAvatar = discordClient.user!.displayAvatarURL();
 
     const sent = await message.reply({
-      embeds: [buildShopEmbed(user.balance?.toString() ?? "0", botAvatar)],
-      components: [buildShopButtons()],
+      embeds: [buildShopEmbed(user.balance?.toString() ?? "0", botAvatar, soldOut)],
+      components: [buildShopButtons(soldOut)],
     });
 
     activeSessions.add(sent.id);
@@ -504,10 +560,14 @@ discordClient.on("messageCreate", async (message) => {
     setTimeout(async () => {
       if (!activeSessions.has(sent.id)) return;
       activeSessions.delete(sent.id);
+      shopCooldowns.set(message.author.id, Date.now());
       try {
+        // Re-fetch user so sold-out reflects any purchases made during the session
+        const freshUser = await getOrCreateUser(message.author.id, message.author.username);
+        const freshSoldOut = computeSoldOut(freshUser as any);
         await sent.edit({
-          embeds: [buildExpiredEmbed(botAvatar)],
-          components: [buildDisabledButtons()],
+          embeds: [buildExpiredEmbed(botAvatar, freshSoldOut)],
+          components: [buildDisabledButtons(freshSoldOut)],
         });
       } catch {
         // message deleted, ignore
