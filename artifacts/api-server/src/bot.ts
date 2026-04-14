@@ -269,7 +269,21 @@ discordClient.on("messageCreate", async (message) => {
         // message deleted, ignore
       }
     }, SESSION_TIMEOUT_MS);
+    return;
   }
+
+  // ── Unknown command catch-all ──────────────────────────────────
+  // Any other TES! prefix command is not recognized.
+  return message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setDescription(
+          `❌ Unknown command: \`TES!${command}\`\n` +
+            `Available commands: \`TES!balance\` · \`TES!shop\` · \`TES!module\``
+        )
+        .setColor(THEME_COLOR),
+    ],
+  });
 });
 
 discordClient.on("interactionCreate", async (interaction) => {
