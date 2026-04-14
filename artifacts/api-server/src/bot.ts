@@ -47,6 +47,9 @@ const activeSessions = new Set<string>();
 const shopCooldowns = new Map<string, number>();
 const SHOP_COOLDOWN_MS = 15_000;
 
+// Tracks the currently open shop message per user so duplicates can be deleted
+const userActiveShop = new Map<string, { messageId: string; delete: () => Promise<void> }>();
+
 let botStartTime = Date.now();
 
 export const discordClient = new Client({
@@ -527,6 +530,14 @@ discordClient.on("messageCreate", async (message) => {
   }
 
   if (command === "shop") {
+    // ── Kill any existing open shop for this user ──────────────────
+    const existing = userActiveShop.get(message.author.id);
+    if (existing) {
+      activeSessions.delete(existing.messageId);
+      userActiveShop.delete(message.author.id);
+      try { await existing.delete(); } catch { /* already gone */ }
+    }
+
     // ── 15-second reopen cooldown ──────────────────────────────────
     const lastExpiry = shopCooldowns.get(message.author.id);
     if (lastExpiry) {
@@ -556,21 +567,21 @@ discordClient.on("messageCreate", async (message) => {
     });
 
     activeSessions.add(sent.id);
+    userActiveShop.set(message.author.id, {
+      messageId: sent.id,
+      delete: () => sent.delete(),
+    });
 
+    // ── Delete the message after 30 seconds ────────────────────────
     setTimeout(async () => {
       if (!activeSessions.has(sent.id)) return;
       activeSessions.delete(sent.id);
+      userActiveShop.delete(message.author.id);
       shopCooldowns.set(message.author.id, Date.now());
       try {
-        // Re-fetch user so sold-out reflects any purchases made during the session
-        const freshUser = await getOrCreateUser(message.author.id, message.author.username);
-        const freshSoldOut = computeSoldOut(freshUser as any);
-        await sent.edit({
-          embeds: [buildExpiredEmbed(botAvatar, freshSoldOut)],
-          components: [buildDisabledButtons(freshSoldOut)],
-        });
+        await sent.delete();
       } catch {
-        // message deleted, ignore
+        // message already deleted, ignore
       }
     }, SESSION_TIMEOUT_MS);
     return;
