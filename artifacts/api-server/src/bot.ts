@@ -109,7 +109,7 @@ function buildShopEmbed(balance: string, botAvatarUrl: string, soldOut: SoldOutM
   });
 
   return new EmbedBuilder()
-    .setTitle("🍀 TES MARKET")
+    .setTitle("TES MARKET")
     .setDescription(
       `─────────────────────\n` +
       lines.join("\n") +
@@ -129,11 +129,11 @@ function buildExpiredEmbed(botAvatarUrl: string, soldOut: SoldOutMap) {
   });
 
   return new EmbedBuilder()
-    .setTitle("🍀 TES MARKET")
+    .setTitle("TES MARKET")
     .setDescription(
       `─────────────────────\n` +
       lines.join("\n") +
-      `\n\n❌ Session expired`
+      `\n\nSession expired.`
     )
     .setColor(THEME_COLOR)
     .setThumbnail(botAvatarUrl);
@@ -178,7 +178,7 @@ function buildItemDetailEmbed(
   const stockLine = item.type === "item" ? "∞" : soldOut ? "0 (Active Order)" : "1 slot available";
   const typeLine = item.type === "item" ? "Item" : "Commission Service";
   return new EmbedBuilder()
-    .setTitle(`🛒 ${item.label}`)
+    .setTitle(item.label)
     .setDescription(item.description)
     .addFields(
       { name: "Stock", value: stockLine, inline: true },
@@ -196,16 +196,16 @@ function buildItemDetailButtons(item: typeof SHOP_ITEMS[number], balance: number
   row.addComponents(
     new ButtonBuilder()
       .setCustomId(`confirm_${item.id}`)
-      .setLabel(soldOut ? "Sold Out" : canAfford ? "✅ Buy" : "🔨 Can't Afford")
+      .setLabel(soldOut ? "Sold Out" : canAfford ? "Buy" : "Can't Afford")
       .setStyle(soldOut || !canAfford ? ButtonStyle.Danger : ButtonStyle.Success)
       .setDisabled(soldOut || !canAfford),
     new ButtonBuilder()
       .setCustomId("back_shop")
-      .setLabel("↩️ Back to Shop")
+      .setLabel("Back to Shop")
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId("leave_shop")
-      .setLabel("❌ Leave Shop")
+      .setLabel("Leave Shop")
       .setStyle(ButtonStyle.Danger)
   );
   return row;
@@ -246,7 +246,7 @@ discordClient.on("messageCreate", async (message) => {
     return message.reply({
       embeds: [
         new EmbedBuilder()
-          .setTitle("💰 Balance")
+          .setTitle("Balance")
           .setDescription(
             `**${message.author.username}**, you have **${user.balance} Token**`
           )
@@ -316,7 +316,7 @@ discordClient.on("messageCreate", async (message) => {
       return message.reply({
         embeds: [
           new EmbedBuilder()
-            .setTitle("✅ Tokens Given")
+            .setTitle("Tokens Given")
             .setDescription(
               `Gave **${amount} Token** to ${target}.\n` +
               `New balance: **${newBalance} Token**`
@@ -369,7 +369,7 @@ discordClient.on("messageCreate", async (message) => {
       return message.reply({
         embeds: [
           new EmbedBuilder()
-            .setTitle("✅ Tokens Taken")
+            .setTitle("Tokens Taken")
             .setDescription(
               `Took **${taken} Token** from ${target}.\n` +
               `New balance: **${newBalance} Token**`
@@ -454,10 +454,10 @@ discordClient.on("messageCreate", async (message) => {
       return message.reply({
         embeds: [
           new EmbedBuilder()
-            .setTitle("✅ Item Added")
+            .setTitle("Item Added")
             .setDescription(
               `Added **${slots}x ${item.label}** to ${target}'s inventory.\n` +
-              `📦 Inventory: **${newInventory.length} slots used**`
+              `Inventory: **${newInventory.length} slots used**`
             )
             .setColor(THEME_COLOR)
             .setThumbnail(discordClient.user!.displayAvatarURL()),
@@ -552,10 +552,10 @@ discordClient.on("messageCreate", async (message) => {
       return message.reply({
         embeds: [
           new EmbedBuilder()
-            .setTitle("✅ Item Removed")
+            .setTitle("Item Removed")
             .setDescription(
               `Removed **${removed}x ${item.label}** from ${target}'s inventory.\n` +
-              `📦 Inventory: **${newInventory.length} slots used**`
+              `Inventory: **${newInventory.length} slots used**`
             )
             .setColor(THEME_COLOR)
             .setThumbnail(discordClient.user!.displayAvatarURL()),
@@ -730,13 +730,13 @@ discordClient.on("interactionCreate", async (interaction) => {
   if (customId.startsWith("confirm_")) {
     const itemId = customId.replace("confirm_", "");
     const item = SHOP_ITEMS.find((i) => i.id === itemId);
-    if (!item) return interaction.reply({ content: "❌ Item not found.", ephemeral: true });
+    if (!item) return interaction.reply({ content: "Item not found.", ephemeral: true });
 
     const user = await getOrCreateUser(interaction.user.id, interaction.user.username);
     const currentBalance = parseFloat(user.balance?.toString() ?? "0");
     const soldOut = computeSoldOut(user as any);
 
-    // Guard: can't afford
+    // Guard: can't afford — just refresh the detail view
     if (currentBalance < item.price) {
       const isSoldOut = soldOut[item.id] ?? false;
       return interaction.update({
@@ -752,14 +752,14 @@ discordClient.on("interactionCreate", async (interaction) => {
         return interaction.update({
           embeds: [
             new EmbedBuilder()
-              .setTitle("❌ Inventory Full")
+              .setTitle("Inventory Full")
               .setDescription(`You can only hold **${MAX_INVENTORY_SLOTS} items**. Remove something first.`)
               .setColor(THEME_COLOR),
           ],
           components: [
             new ActionRowBuilder<ButtonBuilder>().addComponents(
-              new ButtonBuilder().setCustomId("back_shop").setLabel("↩️ Back to Shop").setStyle(ButtonStyle.Secondary),
-              new ButtonBuilder().setCustomId("leave_shop").setLabel("❌ Leave Shop").setStyle(ButtonStyle.Danger)
+              new ButtonBuilder().setCustomId("back_shop").setLabel("Back to Shop").setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder().setCustomId("leave_shop").setLabel("Leave Shop").setStyle(ButtonStyle.Danger)
             ),
           ],
         });
@@ -781,28 +781,46 @@ discordClient.on("interactionCreate", async (interaction) => {
         amount: item.price.toString(),
       });
 
-      // Show success then close
+      // Close session and delete shop message
       activeSessions.delete(interaction.message.id);
       userActiveShop.delete(interaction.user.id);
       shopCooldowns.set(interaction.user.id, Date.now());
+      await interaction.deferUpdate();
+      try { await interaction.message.delete(); } catch { /* already gone */ }
 
-      await interaction.update({
+      // Send order notification to #orders channel
+      const ordersChannel = interaction.guild?.channels.cache.find(
+        (ch) => ch.name === "orders" && ch.isTextBased()
+      );
+      if (ordersChannel?.isTextBased()) {
+        await ordersChannel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle("New Order")
+              .addFields(
+                { name: "User", value: `${interaction.user}`, inline: true },
+                { name: "Item", value: item.label, inline: true },
+                { name: "Cost", value: `${item.price} Token`, inline: true }
+              )
+              .setColor(THEME_COLOR),
+          ],
+        });
+      }
+
+      // Ephemeral success — only the buyer sees this
+      await interaction.followUp({
         embeds: [
           new EmbedBuilder()
-            .setTitle("✅ Purchase Successful")
+            .setTitle("Purchase Successful")
             .setDescription(
-              `You purchased **${item.label}** for **${item.price} Token**!\n` +
-              `📦 Inventory: **${newInventory.length}/${MAX_INVENTORY_SLOTS} slots**\n` +
-              `💰 Remaining balance: **${newBalance} Token**`
+              `You purchased **${item.label}** for **${item.price} Token**.\n` +
+              `Inventory: **${newInventory.length}/${MAX_INVENTORY_SLOTS} slots**\n` +
+              `Remaining balance: **${newBalance} Token**`
             )
             .setColor(0x57f287)
             .setThumbnail(botAvatar),
         ],
-        components: [
-          new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder().setCustomId("leave_shop").setLabel("Close").setStyle(ButtonStyle.Secondary)
-          ),
-        ],
+        ephemeral: true,
       });
       return;
     }
@@ -853,18 +871,18 @@ discordClient.on("interactionCreate", async (interaction) => {
         return interaction.update({
           embeds: [
             new EmbedBuilder()
-              .setTitle("⚠️ Order Failed")
+              .setTitle("Order Failed")
               .setDescription(
                 `Could not place your order for **${item.label}**.\n` +
-                `No **#orders** channel found. Ask an admin to create it.\n` +
+                `No #orders channel found. Ask an admin to create it.\n` +
                 `Your tokens have been refunded.`
               )
               .setColor(THEME_COLOR),
           ],
           components: [
             new ActionRowBuilder<ButtonBuilder>().addComponents(
-              new ButtonBuilder().setCustomId("back_shop").setLabel("↩️ Back to Shop").setStyle(ButtonStyle.Secondary),
-              new ButtonBuilder().setCustomId("leave_shop").setLabel("❌ Leave Shop").setStyle(ButtonStyle.Danger)
+              new ButtonBuilder().setCustomId("back_shop").setLabel("Back to Shop").setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder().setCustomId("leave_shop").setLabel("Leave Shop").setStyle(ButtonStyle.Danger)
             ),
           ],
         });
@@ -874,36 +892,38 @@ discordClient.on("interactionCreate", async (interaction) => {
         await ordersChannel.send({
           embeds: [
             new EmbedBuilder()
-              .setTitle("📦 New Order")
-              .setDescription(`👤 User: ${interaction.user}\n🛍️ Item: **${item.label}**\n📌 New order`)
+              .setTitle("New Order")
+              .addFields(
+                { name: "User", value: `${interaction.user}`, inline: true },
+                { name: "Item", value: item.label, inline: true },
+                { name: "Cost", value: `${item.price} Token`, inline: true }
+              )
               .setColor(THEME_COLOR),
           ],
         });
       }
 
-      // Show success then allow close
+      // Close session and delete shop message
       activeSessions.delete(interaction.message.id);
       userActiveShop.delete(interaction.user.id);
       shopCooldowns.set(interaction.user.id, Date.now());
+      await interaction.deferUpdate();
+      try { await interaction.message.delete(); } catch { /* already gone */ }
 
-      await interaction.update({
+      // Ephemeral success — only the buyer sees this
+      await interaction.followUp({
         embeds: [
           new EmbedBuilder()
-            .setTitle("✅ Order Placed")
+            .setTitle("Order Placed")
             .setDescription(
-              `Your order for **${item.label}** has been placed!\n` +
-              `📬 Notification sent to **#orders**.\n` +
-              `📊 Slots: **0/1 (Active Order)**\n` +
-              `💰 Remaining balance: **${newBalance} Token**`
+              `Your order for **${item.label}** has been placed.\n` +
+              `Notification sent to #orders.\n` +
+              `Remaining balance: **${newBalance} Token**`
             )
             .setColor(0x57f287)
             .setThumbnail(botAvatar),
         ],
-        components: [
-          new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder().setCustomId("leave_shop").setLabel("Close").setStyle(ButtonStyle.Secondary)
-          ),
-        ],
+        ephemeral: true,
       });
       return;
     }
