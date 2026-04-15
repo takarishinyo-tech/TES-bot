@@ -39,6 +39,20 @@ const SHOP_ITEMS = [
     type: "service" as const,
     description: "A custom full body art piece made for you",
   },
+  {
+    id: "tes_lessons_basic",
+    label: "TES Lessons (Basic)",
+    price: 1000,
+    type: "service" as const,
+    description: "Basic TES lesson session — get started with the fundamentals",
+  },
+  {
+    id: "tes_lessons_moderate",
+    label: "TES Lessons (Moderate)",
+    price: 2000,
+    type: "service" as const,
+    description: "Moderate TES lesson session — go deeper with advanced topics",
+  },
 ];
 
 const activeSessions = new Set<string>();
@@ -376,16 +390,13 @@ discordClient.on("messageCreate", async (message) => {
             new EmbedBuilder()
               .setDescription(
                 "❌ Please mention a user.\nUsage: `TES!module add @User <item> <slots>`\n" +
-                "Items: `booster_role` · `headshot_art` · `full_body_art`"
+                "Items: `booster_role` · `headshot_art` · `full_body_art` · `tes_lessons_basic` · `tes_lessons_moderate`"
               )
               .setColor(THEME_COLOR),
           ],
         });
       }
 
-      // args = [<@id>, itemKeyword, slots]  — mention is consumed from content by Discord
-      // After shift() for subcommand, args still contains mention + item + slots
-      // Remove the mention token from args
       const cleanArgs = args.filter(a => !a.startsWith("<@"));
       const itemKeyword = cleanArgs[cleanArgs.length - 2]?.toLowerCase();
       const slots = parseInt(cleanArgs[cleanArgs.length - 1], 10);
@@ -402,7 +413,7 @@ discordClient.on("messageCreate", async (message) => {
           embeds: [
             new EmbedBuilder()
               .setDescription(
-                "❌ Unknown item.\nAvailable items: `booster_role` · `headshot_art` · `full_body_art`"
+                "❌ Unknown item.\nAvailable items: `booster_role` · `headshot_art` · `full_body_art` · `tes_lessons_basic` · `tes_lessons_moderate`"
               )
               .setColor(THEME_COLOR),
           ],
@@ -464,7 +475,7 @@ discordClient.on("messageCreate", async (message) => {
             new EmbedBuilder()
               .setDescription(
                 "❌ Please mention a user.\nUsage: `TES!module remove @User <item> <slots>`\n" +
-                "Items: `booster_role` · `headshot_art` · `full_body_art`"
+                "Items: `booster_role` · `headshot_art` · `full_body_art` · `tes_lessons_basic` · `tes_lessons_moderate`"
               )
               .setColor(THEME_COLOR),
           ],
@@ -487,7 +498,7 @@ discordClient.on("messageCreate", async (message) => {
           embeds: [
             new EmbedBuilder()
               .setDescription(
-                "❌ Unknown item.\nAvailable items: `booster_role` · `headshot_art` · `full_body_art`"
+                "❌ Unknown item.\nAvailable items: `booster_role` · `headshot_art` · `full_body_art` · `tes_lessons_basic` · `tes_lessons_moderate`"
               )
               .setColor(THEME_COLOR),
           ],
