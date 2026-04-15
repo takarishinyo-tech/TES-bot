@@ -256,6 +256,47 @@ discordClient.on("messageCreate", async (message) => {
     });
   }
 
+  if (command === "help") {
+    return message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("TES! Command List")
+          .setColor(THEME_COLOR)
+          .setThumbnail(discordClient.user!.displayAvatarURL())
+          .addFields(
+            {
+              name: "General",
+              value: [
+                "`TES!help` — Show this list",
+                "`TES!balance` — Check your token balance",
+                "`TES!shop` — Open the TES Market",
+              ].join("\n"),
+            },
+            {
+              name: "Shop Items",
+              value: [
+                "`booster_role` — Booster Role · 10 Token",
+                "`headshot_art` — Headshot Art · 500 Token",
+                "`full_body_art` — Full Body Art · 1200 Token",
+                "`tes_lessons_basic` — TES Lessons (Basic) · 1000 Token",
+                "`tes_lessons_moderate` — TES Lessons (Moderate) · 2000 Token",
+              ].join("\n"),
+            },
+            {
+              name: "Admin Only",
+              value: [
+                "`TES!module give @User <amount>` — Give tokens to a user",
+                "`TES!module take @User <amount>` — Take tokens from a user",
+                "`TES!module add @User <item> <slots>` — Add item slots to a user's inventory",
+                "`TES!module remove @User <item> <slots>` — Remove item slots from a user's inventory",
+              ].join("\n"),
+            }
+          )
+          .setFooter({ text: "Admin commands require Administrator permission." }),
+      ],
+    });
+  }
+
   if (command === "module") {
     if (!message.member?.permissions.has("Administrator")) {
       return message.reply({
@@ -648,16 +689,10 @@ discordClient.on("messageCreate", async (message) => {
   return message.reply({
     embeds: [
       new EmbedBuilder()
-        .setTitle("❌ Unknown Command")
+        .setTitle("Unknown Command")
         .setDescription(
-          `\`TES!${command}\` is not a valid command.\n\n` +
-          `**Available commands:**\n` +
-          `\`TES!balance\` — Check your token balance\n` +
-          `\`TES!shop\` — Open the TES Market\n` +
-          `\`TES!module give @User <amount>\` — Give tokens *(Admin)*\n` +
-          `\`TES!module take @User <amount>\` — Take tokens *(Admin)*\n` +
-          `\`TES!module add @User <item> <slots>\` — Add items *(Admin)*\n` +
-          `\`TES!module remove @User <item> <slots>\` — Remove items *(Admin)*`
+          `\`TES!${command}\` is not a valid command.\n` +
+          `Use \`TES!help\` to see all available commands.`
         )
         .setColor(THEME_COLOR),
     ],
